@@ -13,27 +13,55 @@ class ClientState(Enum):
     Third = 2
 
 clients = dict()
+pkt_buff = dict()
+
+def log_print(str, level = 0):
+    if level:
+        print("[%s] %s" % (time.strftime("%H:%M:%S", time.localtime()), str))
 
 def remote_process(remote_socket, socket_fd, client_fileno):
     while True:
         try:
             packet = remote_socket.recv(1200)
-        except Exception as e:
-            print(str(e))
-            clients[client_fileno] = None
+        except:
+            log_print("remote socket recv failed", 1)
+            if clients.get(client_fileno) != None:
+                del clients[client_fileno]
             header = struct.pack("!IH", client_fileno, 65535)
-            socket_fd.sendall(header)
+            try:
+                socket_fd.sendall(header)
+            except:
+                log_print("socket_fd send failed 1", 1)
             break
         if len(packet) == 0:
             gevent.sleep(0)
             continue
         header = struct.pack("!IH", client_fileno, len(packet))
-        print("recv and send remote fileno %d" % client_fileno)
+        log_print("recv and send remote fileno %d" % client_fileno)
         try:
             socket_fd.sendall(header + packet)
-        except Exception as e:
-            print("here" + str(e))
+        except:
+            log_print("socket_fd send failed 2", 1)
         #gevent.sleep(0)
+
+def process_connect(client_fileno, remote_addr, remote_port, socket_fd):
+    ip = gethostbyname(remote_addr)
+    port = int(remote_port)
+    try:
+        log_print("before connect", 1)
+        remote_socket = create_connection((ip, port), timeout=5)
+        log_print("after  connect", 1)
+    except:
+        log_print("remote_socket create failed addr %s" % remote_addr, 1)
+        if pkt_buff.get(client_fileno) != None:
+            del pkt_buff[client_fileno]
+        return
+    gevent.spawn(remote_process, remote_socket, socket_fd, client_fileno)
+    log_print("recv state 1 address %s fileno %d" % (remote_addr, client_fileno))
+    clients[client_fileno] = remote_socket
+    if pkt_buff.get(client_fileno) != None:
+        remote_socket.sendall(pkt_buff.get(client_fileno))
+        del pkt_buff[client_fileno]
 
 class ForwardServer:
     def __init__(self, address):
@@ -50,11 +78,11 @@ class ForwardServer:
             if len(packet) == 0:
                 gevent.sleep(0)
                 continue
-            
-            print("recv len %d" % len(packet))
+
+            log_print("recv len %d" % len(packet))
 
             if last_packet != None:
-                print("reload packet data %d last packet %d" % (len(packet), len(last_packet)))
+                log_print("reload packet data %d last packet %d" % (len(packet), len(last_packet)))
                 packet = last_packet + packet
                 last_packet = None
             start = 0
@@ -62,10 +90,10 @@ class ForwardServer:
                 client_fileno, client_state, content_len = struct.unpack("!IBH", packet[start : start + 7])
                 if (content_len > len(packet[start + 7:])):
                     last_packet = packet[start:]
-                    print("save packet %d" % len(packet[start:]))
-                    break       
-                start = start + 7   
-      
+                    log_print("save packet %d" % len(packet[start:]))
+                    break
+                start = start + 7
+
                 if int(client_state) == 1:
                     atyp = packet[start]
                     if atyp == 1:
@@ -82,41 +110,33 @@ class ForwardServer:
                         remote_port = struct.unpack("!H", packet[start + 17 : start + 19])[0]
                         start = start + 19
                     else:
-                        print("fatal unknown atyp")
+                        log_print("fatal unknown atyp")
                         break
-                    ip = gethostbyname(remote_addr)
-                    port = int(remote_port)
-                    try:
-                        remote_socket = create_connection((ip, port), timeout=0.1)
-                    except:
-                        print("remote_socket create failed addr %s" % remote_addr)
-                        continue
-                    print("recv state 1 address %s fileno %d" % (remote_addr, client_fileno))
-                    clients[client_fileno] = [remote_socket, 1]
+                    gevent.spawn(process_connect, client_fileno, remote_addr, remote_port, socket_fd)
                 elif int(client_state) == 2:
-                    print("recv state 2")
+                    log_print("recv state 2")
                     end = start + content_len
                     if clients.get(client_fileno) == None:
+                        if pkt_buff.get(client_fileno) == None:
+                            pkt_buff[client_fileno] = packet[start:end]
+                        else:
+                            pkt_buff[client_fileno] = pkt_buff.get(client_fileno) + packet[start:end]
                         start = end
-                        print("no fileno")
-                        print(packet)
+                        log_print("no fileno %d and save pkt" % client_fileno, 1)
                         continue
-                    print("recv and send state 2 fileno %d" % (client_fileno))
-                    remote_socket = clients.get(client_fileno)[0]
+                    log_print("recv and send state 2 fileno %d" % (client_fileno))
+                    remote_socket = clients.get(client_fileno)
                     remote_socket.sendall(packet[start : end])
                     start = end
-                    if clients.get(client_fileno)[1] == 1:
-                        clients.get(client_fileno)[1] = 2
-                        gevent.spawn(remote_process, remote_socket, socket_fd, client_fileno)
                 else:
-                    print("fatal unknown client state")
+                    log_print("fatal unknown client state")
                     break
             gevent.sleep(0)
 
 def is_alive():
     while True:
-        print("alive")
-        gevent.sleep(5)
+        log_print("alive", 1)
+        gevent.sleep(1)
 
 if __name__ == '__main__':
     gevent.spawn(is_alive)
