@@ -4,8 +4,10 @@ import gevent
 from gevent.server import StreamServer
 from gevent.socket import create_connection, gethostbyname
 import time
+import socket
+import sys
 
-forwader_address = ('0.0.0.0', 150)
+forwader_address = ('0.0.0.0', 151)
 
 @unique
 class ClientState(Enum):
@@ -23,7 +25,11 @@ def remote_process(remote_socket, socket_fd, client_fileno):
     while True:
         try:
             packet = remote_socket.recv(1200)
+        except socket.timeout as e:
+            gevent.sleep(0)
+            continue
         except:
+            print(sys.exc_info())
             log_print("remote socket recv failed", 1)
             if clients.get(client_fileno) != None:
                 del clients[client_fileno]
@@ -72,15 +78,18 @@ class ForwardServer:
         while True:
             try:
                 packet = socket_fd.recv(65535)
-            except Exception as e:
-                print(str(e))
+            except socket.timeout as e:
+                gevent.sleep(0)
+                continue
+            except:
+                print(sys.exc_info())
                 break
+
             if len(packet) == 0:
                 gevent.sleep(0)
                 continue
 
             log_print("recv len %d" % len(packet))
-
             if last_packet != None:
                 log_print("reload packet data %d last packet %d" % (len(packet), len(last_packet)))
                 packet = last_packet + packet
@@ -135,7 +144,7 @@ class ForwardServer:
 
 def is_alive():
     while True:
-        log_print("alive", 1)
+        log_print("alive", 5)
         gevent.sleep(1)
 
 if __name__ == '__main__':
