@@ -4,6 +4,8 @@ import struct
 import gevent
 from gevent.server import StreamServer
 from gevent.socket import create_connection
+import sys
+import socket
 
 @unique
 class SocksServerState(Enum):
@@ -12,7 +14,7 @@ class SocksServerState(Enum):
     Third = 2
     Final = 3
 
-forwarder_address = ('127.0.0.1', 150)
+forwarder_address = ('127.0.0.1', 151)
 proxyer_address = ('0.0.0.0', 60000)
 proxy_clients = dict()
 global forward_socket
@@ -30,8 +32,11 @@ class ProxyServer:
         while True:
             try:
                 packet = socket_fd.recv(65535)
+            except socket.timeout as e:
+                gevent.sleep(0)
+                continue
             except:
-                log_print("here %d" % socket_fd.fileno())
+                print(sys.exc_info())
                 break
             if len(packet) == 0:
                 gevent.sleep(0)
@@ -104,12 +109,16 @@ def forward_processer():
         global  forward_socket
         try:
             data = forward_socket.recv(65535)
-        except Exception as e:
+        except socket.timeout as e:
+            gevent.sleep(0)
+            continue
+        except:
+            print(sys.exc_info())
+            forward_socket.close()
             try:
                 forward_socket = create_connection(forwarder_address)
             except:
                 log_print("re connect forward failed")
-            log_print(str(e))
             gevent.sleep(0)
             continue
         if len(data) == 0:
@@ -163,7 +172,8 @@ if __name__ == '__main__':
         try:
             forward_socket = create_connection(forwarder_address)
             break
-        except:
+        except Exception as e:
+            log_print("Connect to Forwarder Failed %s" % str(e))
             time.sleep(5)
             continue
     log_print("Connect to Forwarder Success")
