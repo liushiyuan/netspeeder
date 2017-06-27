@@ -12,10 +12,13 @@ class SocksServerState(Enum):
     Third = 2
     Final = 3
 
-forwarder_address = ('192.168.192.130', 150)
+forwarder_address = ('127.0.0.1', 150)
 proxyer_address = ('0.0.0.0', 60000)
 proxy_clients = dict()
 global forward_socket
+
+def log_print(str):
+    print("[%s] %s" % (time.strftime("%H:%M:%S", time.localtime()), str))
 
 class ProxyServer:
     def __init__(self, address):
@@ -28,12 +31,12 @@ class ProxyServer:
             try:
                 packet = socket_fd.recv(65535)
             except:
-                print("here %d" % socket_fd.fileno())
+                log_print("here %d" % socket_fd.fileno())
                 break
             if len(packet) == 0:
                 gevent.sleep(0)
                 continue
-            print("entry")
+            log_print("entry")
             if socks5_state == SocksServerState.First:
                 socks5_state = self.doFirstState(socket_fd, packet)
             elif socks5_state == SocksServerState.Second:
@@ -41,16 +44,16 @@ class ProxyServer:
             elif socks5_state == SocksServerState.Third:
                 self.doThirdState(socket_fd, packet)
             else:
-                print("break in else")
+                log_print("break in else")
                 break
             if socks5_state == SocksServerState.Final:
-                print("break Final")
+                log_print("break Final")
                 break
             gevent.sleep(0)
         try:
             del proxy_clients[socket_fd.fileno()]
         except:
-            print("no key")
+            log_print("no key")
 
     def doFirstState(self, socket_fd, packet):
         ret = SocksServerState.First
@@ -70,7 +73,7 @@ class ProxyServer:
         state = 1
         header = struct.pack("!IBH", fileno, state, len(packet) - 3)
         content = packet[3:]
-        print("state 1 send to forward")
+        log_print("state 1 send to forward")
         global  forward_socket
         try:
             forward_socket.sendall(header + content)
@@ -87,7 +90,7 @@ class ProxyServer:
         fileno = int(socket_fd.fileno())
         state = 2
         header = struct.pack("!IBH", fileno, state, len(packet))
-        print("state 2 send to forward")
+        log_print("state 2 send to forward")
         global forward_socket
         try:
             forward_socket.sendall(header + packet)
@@ -105,8 +108,8 @@ def forward_processer():
             try:
                 forward_socket = create_connection(forwarder_address)
             except:
-                print("re connect forward failed")
-            print(str(e))
+                log_print("re connect forward failed")
+            log_print(str(e))
             gevent.sleep(0)
             continue
         if len(data) == 0:
@@ -114,10 +117,10 @@ def forward_processer():
             continue
         start = 0
         if last_packet != None:
-            print("reload packet data %d last packet %d" % (len(data), len(last_packet)))
+            log_print("reload packet data %d last packet %d" % (len(data), len(last_packet)))
             data = last_packet + data
             last_packet = None
-        print("recv forward start len %d" % len(data))
+        log_print("recv forward start len %d" % len(data))
         while start < len(data):
             if (start + 6 > len(data)):
                 last_packet = data[start:]
@@ -126,25 +129,25 @@ def forward_processer():
             if int(content_len) == 65535:
                 client_socket = proxy_clients.get(fileno)
                 if client_socket != None:
-                    print("close %d" % fileno)
+                    log_print("close %d" % fileno)
                     client_socket.close()
                 start = start + 6
                 continue
             if (content_len > len(data[start + 6:])):
                 last_packet = data[start:]
-                print("save packet %d  content len %d" % (len(data[start:]), content_len))
-                print(data[start:])
+                log_print("save packet %d  content len %d" % (len(data[start:]), content_len))
+                log_print(data[start:])
                 break
-            print("recv forward start %d content %d" % (start, content_len))
+            log_print("recv forward start %d content %d" % (start, content_len))
             client_socket = proxy_clients.get(fileno)
             if client_socket == None:
                 start = start + 6 + content_len
-                print("no client socket")
+                log_print("no client socket")
                 continue
             try:
                 client_socket.sendall(data[start + 6 : start + 6 + content_len])
             except:
-                print("client_socket has closed")
+                log_print("client_socket has closed")
             start = start + 6 + content_len
 
 def proxy_processer():
@@ -152,7 +155,7 @@ def proxy_processer():
 
 def detect_processer():
     while True:
-        print("alive")
+        #print("alive")
         gevent.sleep(5)
 
 if __name__ == '__main__':
@@ -163,6 +166,6 @@ if __name__ == '__main__':
         except:
             time.sleep(5)
             continue
-    print("Connect to Forwarder Success")
+    log_print("Connect to Forwarder Success")
     tasks = (gevent.spawn(forward_processer), gevent.spawn(proxy_processer), gevent.spawn(detect_processer))
     gevent.joinall(tasks)
